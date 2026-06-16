@@ -1,0 +1,3 @@
+"""
+EXIF + video metadata reading
+"""
