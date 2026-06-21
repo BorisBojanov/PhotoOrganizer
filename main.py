@@ -1,11 +1,18 @@
 """
 main entrypoint, CLI commands
+
+Test command:
+python3 main.py --dry-run  "/Users/boris/Desktop/Spain instagram photos" -d /Users/boris/Desktop/TestOut
+
+
 """
 
 import argparse
 import logging
 import sys
 from pathlib import Path
+from scanner import scan_sources
+
 
 def setup_logging(log_file: Path) -> None: # type hint Path, and -> None is A return type hint
     """"Create logs to both the consol and a file"""
@@ -75,7 +82,10 @@ def main():
         logging.info(f"Sources: {[str(s) for s in args.sources]}")
         logging.info(f"Destination: {args.destination}")
         
-        # Next steps will be called here
+    # Next steps will be called here
+    records = scan_sources(args.sources)
+    logging.info(f"Scanner complete. {len(records)} files found.")
+
 
 if __name__ == "__main__":
     main()
