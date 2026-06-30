@@ -18,7 +18,8 @@ class FileRecord:
     gps_lat: Optional[float] = None
     gps_lon: Optional[float] = None
     # gps_alt: Optional[float] = None # Not all have this
-
+    has_sidecar: bool = False           # 20200705_222324_033.jpg.supplemental-met.json
+    sidecar_path: Optional[Path] = None # If there is a sidecar file, this is its path. We can use it to read metadata if needed.
 
     # Integrity
     is_corrupted: bool = False

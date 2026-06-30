@@ -1,0 +1,36 @@
+{
+  "title": "20200705_222324_037.jpg",
+  "description": "",
+  "imageViews": "1",
+  "creationTime": {
+    "timestamp": "1594021734",
+    "formatted": "Jul 6, 2020, 7:48:54 AM UTC"
+  },
+  "photoTakenTime": {
+    "timestamp": "1594009408",
+    "formatted": "Jul 6, 2020, 4:23:28 AM UTC"
+  },
+  "geoData": {
+    "latitude": 51.1042827,
+    "longitude": -114.09497329999999,
+    "altitude": 1136.697,
+    "latitudeSpan": 0.0,
+    "longitudeSpan": 0.0
+  },
+  "geoDataExif": {
+    "latitude": 51.1042827,
+    "longitude": -114.09497329999999,
+    "altitude": 1136.697,
+    "latitudeSpan": 0.0,
+    "longitudeSpan": 0.0
+  },
+  "url": "https://photos.google.com/photo/AF1QipP4BOCVlD7OzYRgb1FpXScY97aLzUy8p8wMPYw6",
+  "googlePhotosOrigin": {
+    "mobileUpload": {
+      "deviceFolder": {
+        "localFolderName": ""
+      },
+      "deviceType": "ANDROID_PHONE"
+    }
+  }
+}
