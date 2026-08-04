@@ -11,10 +11,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from scanner import scan_sources
-from duplicates import find_duplicates
-from metadata import enrich_metadata
-from integrity import check_integrity
+
 
 def setup_logging(log_file: Path) -> None: # type hint Path, and -> None is A return type hint
     """"Create logs to both the consol and a file"""
@@ -85,28 +82,48 @@ def main():
         logging.info(f"Destination: {args.destination}")
         
     # Next steps will be called here
+    from scanner import scan_sources
+
     records = scan_sources(args.sources)
-    logging.info(f"Scanner complete. {len(records)} files found.")
+    # logging.info(f"Scanner complete. {len(records)} files found.")
 
     #Metadata loop
     # After scan_sources call, add:
-    logging.info("Reading metadata...")
+    # logging.info("Reading metadata...")
+    from metadata import enrich_metadata
+
     for record in records:
         enrich_metadata(record)
     # Quick sanity check log:
     sources = {}
 
     # Integrity check loop
-    logging.info("Checking file integrity...")
+    # logging.info("Checking file integrity...")
+    from integrity import check_integrity
+
     check_integrity(records)
 
     # Douplicate detection loop
     # after the metadata loop and integrity check
     for r in records:
         sources[r.data_source] = sources.get(r.data_source, 0) + 1
-    logging.info(f"Data sources: {sources}")
-    logging.info("Checking for duplicates...")
+    # logging.info(f"Data sources: {sources}")
+    # logging.info("Checking for duplicates...")
+    from duplicates import find_duplicates
+
     duplicate_groups = find_duplicates(records)
+
+    # organize files based on their date taken
+    # logging.info("Organizing files...")
+    from organizer import organize
+
+    organize(records, args.destination, args.dry_run)
+
+    from reporter import write_report
+
+    write_report(records, args.destination, args.dry_run)
+
+
 
 if __name__ == "__main__":
     main()

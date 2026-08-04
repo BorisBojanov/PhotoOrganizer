@@ -52,13 +52,19 @@ def parse_exif_date(date_str: str)-> datetime | None:
     try:
         date = datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S")
         return date
-    except ValueError, AttributeError:
+    except (ValueError, AttributeError) as e:
         logging.warning(f"Failed to parese EXIF date: {date_str}")
         return None
     
 
 def parse_date_from_filename(path: Path) -> datetime | None:
-    """Try to find a date from the path using common filename patterns
+    """
+    Look for a year (optionally with month) in parent folder names.
+    Handles: 'Photos from 2016', '2021_01', '2016', 'camping 2024'.
+    Checks nearest parent first. Returns Jan 1 of that year (or the 1st
+    of the month if found) — coarse, but far better than the copy date.
+
+    Try to find a date from the path using common filename patterns
         #Idea is to implament some sort of template question to set this up for user. 
 
     /All_Photos/2021_01/IMG....
@@ -70,28 +76,46 @@ def parse_date_from_filename(path: Path) -> datetime | None:
     """
     name = path.stem # .stem gives name without extension
     
-    patterns = [
-        # date and time: yyyy_mm_dd_HH_MM_SS or with -
-        r"(\d{4})[_\-](\d{2})[_\-](\d{2})[_\-](\d{2})[_\-](\d{2})[_\-](\d{2})",
-        # date only: yyyy_mm_dd
-        r"(\d{4})[_\-](\d{2})[_\-](\d{2})",
-        # date time compact:
-        r"(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})"
-        # date compact:
-        r"(\d{4})(\d{2})(\d{2})",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, name)
-        if match:
-            parts = [int(x) for x in match.groups()]
+    # patterns = [
+    #     # date and time: yyyy_mm_dd_HH_MM_SS or with -
+    #     r"(\d{4})[_\-](\d{2})[_\-](\d{2})[_\-](\d{2})[_\-](\d{2})[_\-](\d{2})",
+    #     # date only: yyyy_mm_dd
+    #     r"(\d{4})[_\-](\d{2})[_\-](\d{2})",
+    #     # date time compact:
+    #     r"(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})"
+    #     # date compact:
+    #     r"(\d{4})(\d{2})(\d{2})",
+    # ]
+
+    # for pattern in patterns:
+    #     match = re.search(pattern, name)
+    #     if match:
+    #         parts = [int(x) for x in match.groups()]
             
-            try:
-                if len(parts) == 6:
-                    return datetime(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5])
-                else: 
-                    return datetime(parts[0], parts[1], parts[2])
-            except ValueError:
-                continue # If the date parts are invalid, try the next pattern
+    #         try:
+    #             if len(parts) == 6:
+    #                 return datetime(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5])
+    #             else: 
+    #                 return datetime(parts[0], parts[1], parts[2])
+    #         except ValueError:
+    #             continue # If the date parts are invalid, try the next pattern
+
+    for parent in path.parents:
+        name = parent.name
+
+        # 'YYYY_MM' or 'YYYY-MM' → year + month
+        match = re.fullmatch(r"(\d{4})[_\-](\d{2})", name)
+        if match:
+            year, month = int(match.group(1)), int(match.group(2))
+            if 1990 <= year <= datetime.now().year and 1 <= month <= 12:
+                return datetime(year, month, 1)
+
+        # any standalone 4-digit year in the folder name
+        match = re.search(r"\b(19[9]\d|20[0-4]\d)\b", name)
+        if match:
+            year = int(match.group(1))
+            return datetime(year, 1, 1)
+
     return None
 
 # ── Image metadata ────────────────────────────────────────────────────────────
@@ -204,6 +228,62 @@ def read_video_metadata(record: FileRecord) -> None:
     except Exception as e:
         record.errors.append(f"Video metadata read failed: {e}")
 
+# -- Sidecar metadata (JSON) ---
+SIDECAR_SUFFIXES = [
+    ".supplemental-metadata.json",
+    ".supplemental-meta.json",
+    ".json",
+]
+
+def find_sidecar(path: Path) -> Path | None:
+    """
+    Locate a Google Takeout / XMP sidecar for this media file.
+    Tries exact conventions first, then a prefix glob for Google's
+    truncated filenames (it caps metadata names around 51 chars).
+    """
+    # IMG_1234.JPG.supplemental-metadata.json  /  IMG_1234.JPG.json
+    for suffix in SIDECAR_SUFFIXES:
+        candidate = path.with_name(path.name + suffix)
+        if candidate.exists():
+            return candidate
+
+    # IMG_1234.json  (extension replaced rather than appended)
+    candidate = path.with_suffix(".json")
+    if candidate.exists():
+        return candidate
+
+    # XMP sidecars from Lightroom / darktable
+    for candidate in (path.with_name(path.name + ".xmp"), path.with_suffix(".xmp")):
+        if candidate.exists():
+            return candidate
+
+    # Truncated Google names: match anything starting with the media filename
+    matches = sorted(path.parent.glob(f"{path.name}*.json"))
+    if matches:
+        return matches[0]
+
+    return None
+
+def read_sidecar_metadata(record: FileRecord) -> None:
+    """Read photoTakenTime from a Google Takeout JSON sidecar."""
+    if not record.sidecar_path or record.sidecar_path.suffix.lower() != ".json":
+        return
+    try:
+        with open(record.sidecar_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        taken = data.get("photoTakenTime") or data.get("creationTime")
+        if taken and "timestamp" in taken:
+            record.date_taken = datetime.fromtimestamp(int(taken["timestamp"]))
+            record.data_source = "sidecar"
+
+        geo = data.get("geoData") or {}
+        if geo.get("latitude") and geo.get("longitude"):
+            record.gps_lat = round(float(geo["latitude"]), 6)
+            record.gps_lon = round(float(geo["longitude"]), 6)
+
+    except Exception as e:
+        record.errors.append(f"Sidecar read failed: {e}")
 
 # ── Public API ────────────────────────────────────────────────────────────────
 def enrich_metadata(record: FileRecord) -> FileRecord:
@@ -221,6 +301,14 @@ def enrich_metadata(record: FileRecord) -> FileRecord:
     else:
         read_image_metadata(record)
 
+    # after read_video_metadata / read_image_metadata:
+    record.sidecar_path = find_sidecar(record.path)
+    record.has_sidecar = record.sidecar_path is not None
+
+    if record.date_taken is None and record.has_sidecar:
+        read_sidecar_metadata(record)
+
+    # then filename → folder → mtime fallbacks
     # Fallback chain if primary method found nothing
     if record.date_taken is None:
         parsed = parse_date_from_filename(record.path)
@@ -234,7 +322,9 @@ def enrich_metadata(record: FileRecord) -> FileRecord:
         logging.debug(f"Using file modified date for: {record.path.name}")
 
     return record
-    
+
+
+
 def test():
     mypath="20200705_222324_037.jpg"
     with open(mypath, 'rb') as f:
