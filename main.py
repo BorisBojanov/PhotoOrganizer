@@ -14,7 +14,7 @@ from pathlib import Path
 from scanner import scan_sources
 from duplicates import find_duplicates
 from metadata import enrich_metadata
-
+from integrity import check_integrity
 
 def setup_logging(log_file: Path) -> None: # type hint Path, and -> None is A return type hint
     """"Create logs to both the consol and a file"""
@@ -96,8 +96,12 @@ def main():
     # Quick sanity check log:
     sources = {}
 
+    # Integrity check loop
+    logging.info("Checking file integrity...")
+    check_integrity(records)
+
     # Douplicate detection loop
-    # after the metadata loop
+    # after the metadata loop and integrity check
     for r in records:
         sources[r.data_source] = sources.get(r.data_source, 0) + 1
     logging.info(f"Data sources: {sources}")
