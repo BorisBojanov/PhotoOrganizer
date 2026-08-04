@@ -1,0 +1,8 @@
+# Python 3.10+ required (uses `X | None` union syntax)
+ExifRead>=3.0
+pillow>=11.0
+pillow-heif>=1.0
+
+# System dependency (not pip-installable):
+#   ffmpeg — provides ffprobe, used for video metadata and corruption checks
+#   macOS: brew install ffmpeg
