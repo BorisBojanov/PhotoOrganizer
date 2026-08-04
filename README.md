@@ -4,7 +4,7 @@ Organizes a messy photo/video collection (e.g. a Google Takeout export) into a
 clean `Year / Month` folder tree, sorted by the date each photo was actually
 taken. Files are **copied, never moved or deleted** — the source stays intact.
 
-```
+```text
 TestOut/
 ├── 2020/
 │   └── 07 July/
