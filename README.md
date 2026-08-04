@@ -39,13 +39,64 @@ Requires **Python 3.10+** and [ffmpeg](https://ffmpeg.org) (`ffprobe` is used
 for video metadata and corruption checks; without it videos fall back to other
 date sources and skip the integrity check).
 
+### macOS / Linux
+
 ```bash
 python3 -m venv .photoOrganize
 ./.photoOrganize/bin/pip install -r requirements.txt
-brew install ffmpeg   # macOS
+brew install ffmpeg          # macOS
+sudo apt install ffmpeg      # Debian / Ubuntu / Raspberry Pi OS
 ```
 
 Then run with the venv's interpreter: `./.photoOrganize/bin/python main.py ...`
+
+### Windows
+
+1. **Install Python 3.10+** from [python.org](https://www.python.org/downloads/)
+   or the Microsoft Store. On the python.org installer, tick
+   *"Add python.exe to PATH"*.
+
+2. **Create the venv and install dependencies** (PowerShell or cmd, from the
+   project folder):
+
+   ```powershell
+   py -m venv .photoOrganize
+   .photoOrganize\Scripts\pip install -r requirements.txt
+   ```
+
+3. **Install ffmpeg** so `ffprobe` is on your PATH:
+
+   ```powershell
+   winget install Gyan.FFmpeg
+   ```
+
+   (or download a build from [ffmpeg.org](https://ffmpeg.org/download.html),
+   unzip it, and add its `bin` folder to PATH). Open a **new** terminal
+   afterwards and confirm with `ffprobe -version`.
+
+4. **Run** with the venv's interpreter — note `Scripts\` instead of `bin/`,
+   and backslashes in paths:
+
+   ```powershell
+   .photoOrganize\Scripts\python main.py --dry-run C:\Users\you\Pictures\TestInput -d D:\Organized
+   ```
+
+Windows notes:
+
+- **Long paths**: Windows historically limits paths to 260 characters, and the
+  date prefix makes names longer. If you see `FileNotFoundError` on deep
+  folders, either keep the destination near a drive root (e.g. `D:\Organized`)
+  or enable long paths once in an *administrator* PowerShell:
+
+  ```powershell
+  Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -Value 1
+  ```
+
+- **Case handling**: NTFS is case-insensitive like macOS; collision detection
+  is case-insensitive by policy anyway, so the output tree is identical across
+  Windows, macOS, and Linux.
+- Filenames are safe as-is — the `2020-07-05_22-23-28_` prefix uses no
+  characters that are illegal on Windows.
 
 ## How it works
 
