@@ -70,8 +70,11 @@ The pipeline in `main.py` runs five stages, each filling in more of a shared
 5. **Organize** ([organizer.py](organizer.py)) — copy the survivors into
    `YEAR/MM Month/` with a `YYYY-MM-DD_HH-MM-SS_` prefix on the original name
    (undated files go to `Unknown Date/` unrenamed). Name collisions get a
-   `_1`, `_2`, … counter — nothing is ever overwritten. `shutil.copy2`
-   preserves file timestamps.
+   `_1`, `_2`, … counter — nothing is ever overwritten. Collisions are
+   detected case-insensitively (and unicode-normalized) regardless of the
+   filesystem, so a run produces the same tree on macOS and Linux, and the
+   output stays safe to copy onto any drive. `shutil.copy2` preserves file
+   timestamps.
 
 Afterwards [reporter.py](reporter.py) writes a CSV into the destination with
 one row per file: status (`copied` / `duplicate` / `corrupted` / …), the date
