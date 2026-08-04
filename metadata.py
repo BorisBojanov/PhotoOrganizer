@@ -39,6 +39,7 @@ from pathlib import Path
 
 import exifread
 from PIL import Image
+from PIL import Image, ExifTags
 from pillow_heif import register_heif_opener
 
 from config import VIDEO_EXTENSIONS, IMAGE_EXTENSIONS
@@ -93,7 +94,78 @@ def parse_date_from_filename(path: Path) -> datetime | None:
                 continue # If the date parts are invalid, try the next pattern
     return None
 
-def parse_gps_to_decimal(values, ref: str) -> float:
+# ── Image metadata ────────────────────────────────────────────────────────────
+
+def read_image_metadata(record: FileRecord) -> None:
+    """Read EXIF via Pillow — works for JPEG, HEIC, PNG, TIFF alike."""
+    try:
+        with Image.open(record.path) as img:
+            exif = img.getexif()
+            if not exif:
+                return  # no EXIF at all — fallback chain will handle it
+
+            # Date lives in the Exif sub-IFD, camera info in the main IFD
+            exif_ifd = exif.get_ifd(ExifTags.IFD.Exif)
+
+            #Check the date taken tags
+            """ Example tag key values for 20200705_222324_037.jpg
+
+            "EXIF DateTimeOriginal": 2020:07:05 22:23:28
+            "EXIF DateTimeDigitized": 2020:07:05 22:23:28
+            "Image DateTime": 2020:07:05 22:23:28
+
+            EXIF DateTimeOriginal: When the actual physical scene was shot.
+            EXIF DateTimeDigitized: When the image data was digitized (often same as DateTimeOriginal).
+
+            Image DateTime: When the image data or metadata was last saved/edited. (Not reliable for original capture date, can change if file is edited or copied.)
+            """
+            date_str = (
+                exif_ifd.get(ExifTags.Base.DateTimeOriginal)
+                or exif_ifd.get(ExifTags.Base.DateTimeDigitized)
+                or exif.get(ExifTags.Base.DateTime)
+            )
+            if date_str:
+                parsed = parse_exif_date(str(date_str))
+                if parsed:
+                    record.date_taken = parsed
+                    record.data_source = "exif"
+
+            make = exif.get(ExifTags.Base.Make)
+            model = exif.get(ExifTags.Base.Model)
+            if make:
+                record.camera_make = str(make).strip()
+            if model:
+                record.camera_model = str(model).strip()
+
+            # GPS data
+            """
+            GPS GPSVersionID: [2, 2, 0, 0]
+            GPS GPSLatitudeRef: N
+            GPS GPSLatitude: [51, 6, 9636/625]
+            GPS GPSLongitudeRef: W
+            GPS GPSLongitude: [114, 5, 209519/5000]
+            GPS GPSAltitudeRef: 0
+            GPS GPSAltitude: 1136697/1000
+            GPS GPSTimeStamp: [4, 23, 1]
+            GPS GPSDate: 2020:07:06
+            Image GPSInfo: 5964
+            """
+            gps = exif.get_ifd(ExifTags.IFD.GPSInfo)
+            if gps:
+                try:
+                    lat = pillow_gps_to_decimal(gps.get(2), str(gps.get(1, "N")))
+                    lon = pillow_gps_to_decimal(gps.get(4), str(gps.get(3, "E")))
+                    if lat is not None and lon is not None:
+                        record.gps_lat = lat
+                        record.gps_lon = lon
+                except Exception:
+                    pass
+
+    except Exception as e:
+        record.errors.append(f"Image metadata read failed: {e}")
+
+
+def pillow_gps_to_decimal(values, ref: str) -> float:
     """Convert GPS: [51, 6, 9636/625] to decimal degrees, and apply N/S/E/W reference."""
     d = values[0].num / values[0].den
     m = values[1].num / values[1].den
@@ -104,60 +176,64 @@ def parse_gps_to_decimal(values, ref: str) -> float:
     round(decimal, 6)
     return decimal
 
-def read_image_metadata(record: FileRecord)-> None:
-    """Read EXIF data from image files using exifread."""
+
+# ── Video metadata ────────────────────────────────────────────────────────────
+
+def read_video_metadata(record: FileRecord) -> None:
+    """Use ffprobe to read creation_time from video container."""
     try:
-        with open(record.path, 'rb') as f:
-            # Dict of all tags
-            tags = exifread.process_file(f, stop_tag="EXIF ImageUniqueID", details=False)
+        cmd = [
+            "ffprobe", "-v", "quiet",
+            "-print_format", "json",
+            "-show_entries", "format_tags=creation_time",
+            str(record.path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        data = json.loads(result.stdout)
+        creation_time = data.get("format", {}).get("tags", {}).get("creation_time")
 
-        #Check the date taken tags
-        """ Example tag key values for 20200705_222324_037.jpg
+        if creation_time:
+            # ffprobe returns ISO 8601: "2023-04-15T14:32:01.000000Z"
+            record.date_taken = datetime.fromisoformat(
+                creation_time.replace("Z", "+00:00")
+            ).replace(tzinfo=None)
+            record.data_source = "video_container"
 
-        "EXIF DateTimeOriginal": 2020:07:05 22:23:28
-        "EXIF DateTimeDigitized": 2020:07:05 22:23:28
-        "Image DateTime": 2020:07:05 22:23:28
-
-        EXIF DateTimeOriginal: When the actual physical scene was shot.
-        EXIF DateTimeDigitized: When the image data was digitized (often same as DateTimeOriginal).
-
-        Image DateTime: When the image data or metadata was last saved/edited. (Not reliable for original capture date, can change if file is edited or copied.)
-        """
-        metadataTags = ["EXIF DateTimeOriginal", "EXIF DateTimeDigitized"]
-
-        for tag in metadataTags:
-            if tag in tags:
-                parsed = parse_exif_date(str(tags.get(tag))) # uses .get to avoid KeyError.
-                if parsed:
-                    # add to record object and break out of loop
-                    record.date_taken = parsed
-
-        #Camera make and model
-        if "Image Make" in tags:
-            record.camera_make = str(tags.get("Image Make")).strip()
-        if "Image Model" in tags:
-            record.camera_model = str(tags.get("Image Model")).strip()
-
-        # GPS data
-        """
-        GPS GPSVersionID: [2, 2, 0, 0]
-        GPS GPSLatitudeRef: N
-        GPS GPSLatitude: [51, 6, 9636/625]
-        GPS GPSLongitudeRef: W
-        GPS GPSLongitude: [114, 5, 209519/5000]
-        GPS GPSAltitudeRef: 0
-        GPS GPSAltitude: 1136697/1000
-        GPS GPSTimeStamp: [4, 23, 1]
-        GPS GPSDate: 2020:07:06
-        Image GPSInfo: 5964
-        """
-        if "GPS GPSLongitude" in tags and "GPS GPSLatitude" in tags:
-            # try:
-                lat = list[tags.get("GPS GPSLatitude")]
-
+    except FileNotFoundError:
+        record.errors.append("ffprobe not found — install ffmpeg to read video dates")
     except Exception as e:
-        pass
-    
+        record.errors.append(f"Video metadata read failed: {e}")
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+def enrich_metadata(record: FileRecord) -> FileRecord:
+    """
+    Fill in date_taken and camera info on a FileRecord.
+    Skips files that don't exist or are already known to be problematic.
+    """
+    if not record.exists or record.size_bytes == 0:
+        return record
+
+    suffix = record.path.suffix.lower()
+
+    if suffix in VIDEO_EXTENSIONS:
+        read_video_metadata(record)
+    else:
+        read_image_metadata(record)
+
+    # Fallback chain if primary method found nothing
+    if record.date_taken is None:
+        parsed = parse_date_from_filename(record.path)
+        if parsed:
+            record.date_taken = parsed
+            record.data_source = "filename"
+
+    if record.date_taken is None:
+        record.date_taken = datetime.fromtimestamp(record.path.stat().st_mtime)
+        record.data_source = "file_modified"
+        logging.debug(f"Using file modified date for: {record.path.name}")
+
+    return record
     
 def test():
     mypath="20200705_222324_037.jpg"
@@ -239,5 +315,5 @@ def test():
         print(f"Lat: {lat}") #>>> Date: 2020:07:05 22:23:28
 
 
-if __name__ == "__main__":
-    test()
+# if __name__ == "__main__":
+#     test()

@@ -2,7 +2,7 @@
 main entrypoint, CLI commands
 
 Test command:
-python3 main.py --dry-run  "/Users/boris/Desktop/Spain instagram photos" -d /Users/boris/Desktop/TestOut
+python3 main.py --dry-run "/Users/boris/Desktop/TestInput" -d "/Users/boris/Desktop/TestOut"
 
 
 """
@@ -12,6 +12,8 @@ import logging
 import sys
 from pathlib import Path
 from scanner import scan_sources
+from duplicates import find_duplicates
+from metadata import enrich_metadata
 
 
 def setup_logging(log_file: Path) -> None: # type hint Path, and -> None is A return type hint
@@ -86,6 +88,21 @@ def main():
     records = scan_sources(args.sources)
     logging.info(f"Scanner complete. {len(records)} files found.")
 
+    #Metadata loop
+    # After scan_sources call, add:
+    logging.info("Reading metadata...")
+    for record in records:
+        enrich_metadata(record)
+    # Quick sanity check log:
+    sources = {}
+
+    # Douplicate detection loop
+    # after the metadata loop
+    for r in records:
+        sources[r.data_source] = sources.get(r.data_source, 0) + 1
+    logging.info(f"Data sources: {sources}")
+    logging.info("Checking for duplicates...")
+    duplicate_groups = find_duplicates(records)
 
 if __name__ == "__main__":
     main()
