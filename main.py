@@ -160,7 +160,8 @@ def main():
     dup_stats = log_duplicate_summary(duplicate_groups)
 
     # organize files based on their date taken
-    # logging.info("Organizing files...")
+    # organize() has its own Progress: it decides which records are copyable
+    # and the copy order, so it is the only place that knows the denominator.
     from organizer import organize
 
     organize(records, args.destination, args.dry_run)

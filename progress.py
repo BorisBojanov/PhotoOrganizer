@@ -10,6 +10,8 @@ Two things make an ETA actually usable on a 30k-file library:
     rather than files finished. These phases are I/O bound, and a 4 GB
     video is not "one file" worth of work next to a 2 MB jpg. Counting
     files makes the ETA lurch every time a video comes up.
+  * A background ticker logs on the same interval even when nothing has
+    finished, so a stalled phase still says so.
 
 Counters are mutated from worker threads, so every update takes a lock.
 """
@@ -50,7 +52,8 @@ class Progress:
     """
 
     def __init__(self, label: str, total_items: int,
-                 total_bytes: int = 0, interval_s: float = 15.0):
+                 total_bytes: int = 0, interval_s: float = 15.0,
+                 heartbeat: bool = True):
         self.label = label
         self.total_items = max(total_items, 0)
         self.total_bytes = max(total_bytes, 0)
@@ -61,6 +64,27 @@ class Progress:
         self._done_bytes = 0
         self._start = time.monotonic()
         self._last_log = self._start
+
+        # A phase can stall for minutes on one huge file, and advance() only
+        # logs when something finishes — so a stall produces no output at all.
+        # The ticker keeps the line coming: "0/1200 ... elapsed 15m" says
+        # "stuck here" out loud, where silence says nothing.
+        self._stopped = threading.Event()
+        self._ticker = None
+        if heartbeat and interval_s > 0:
+            self._ticker = threading.Thread(
+                target=self._tick, name=f"progress-{label}", daemon=True)
+            self._ticker.start()
+
+    def _tick(self) -> None:
+        while not self._stopped.wait(self.interval_s):
+            with self._lock:
+                now = time.monotonic()
+                if now - self._last_log < self.interval_s:
+                    continue          # advance() already logged this window
+                self._last_log = now
+                message = self._render(now)
+            logging.info(message)
 
     def advance(self, size_bytes: int = 0) -> None:
         """Record one finished item. Safe to call from any thread."""
@@ -107,6 +131,12 @@ class Progress:
         return " | ".join(parts)
 
     def finish(self) -> None:
+        # Stop the ticker before the summary so it can't print a progress
+        # line after "finished".
+        self._stopped.set()
+        if self._ticker is not None:
+            self._ticker.join(timeout=1.0)
+
         elapsed = time.monotonic() - self._start
         rate = self._done_items / elapsed if elapsed > 0 else 0.0
         logging.info(

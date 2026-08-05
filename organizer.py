@@ -15,6 +15,7 @@ import unicodedata
 from pathlib import Path
 from config import MONTH_NAMES, UNKNOWN_DATE_FOLDER
 from models import FileRecord
+from progress import Progress
 from datetime import datetime
 
 def build_destination(record: FileRecord, destination_root: Path) -> Path:
@@ -132,38 +133,52 @@ def organize(records: list[FileRecord], destination_root: Path, dry_run: bool = 
     would_copy = 0
     sidecars = 0
     claimed: dict[Path, set[str]] = {}  # collision registry for this run
+
+    # This phase's own denominator: only the files that actually get copied.
+    # `records` includes duplicates and corrupted files that are skipped here,
+    # so counting them would park the ETA short of 100%.
+    logging.info(f"Organizing {len(to_copy)} files...")
+    progress = Progress("Organizing", len(to_copy),
+                        total_bytes=sum(r.size_bytes for r in to_copy))
+
     for record in to_copy:
-        target_path = build_destination(record, destination_root)
-        final_target = resolve_collision(target_path, claimed)
-        record.destination = final_target  # Store the destination path in the record
+        try:
+            target_path = build_destination(record, destination_root)
+            final_target = resolve_collision(target_path, claimed)
+            record.destination = final_target  # Store the destination path in the record
 
-        if dry_run:
-            would_copy += 1
-            logging.info(f"DRY RUN: Would copy {record.path} to {final_target}")
-            if record.sidecar_path:
-                sidecar_target = copy_sidecar(
-                    record.sidecar_path, record.path, final_target,
-                    claimed, dry_run=True,
-                )
-                sidecars += 1
-                logging.info(
-                    f"DRY RUN: Would copy sidecar {record.sidecar_path} "
-                    f"to {sidecar_target}"
-                )
-            continue
+            if dry_run:
+                would_copy += 1
+                logging.info(f"DRY RUN: Would copy {record.path} to {final_target}")
+                if record.sidecar_path:
+                    sidecar_target = copy_sidecar(
+                        record.sidecar_path, record.path, final_target,
+                        claimed, dry_run=True,
+                    )
+                    sidecars += 1
+                    logging.info(
+                        f"DRY RUN: Would copy sidecar {record.sidecar_path} "
+                        f"to {sidecar_target}"
+                    )
+            else:
+                final_target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(record.path, final_target) # copy2 preserves timestamps
+                record.was_copied = True  # Mark the record as copied
+                copied += 1
+                logging.info(f"Copied {record.path} to {final_target}")
 
-        final_target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(record.path, final_target) # copy2 preserves timestamps
-        record.was_copied = True  # Mark the record as copied
-        copied += 1
-        logging.info(f"Copied {record.path} to {final_target}")
+                if record.sidecar_path:
+                    sidecar_target = copy_sidecar(
+                        record.sidecar_path, record.path, final_target, claimed
+                    )
+                    sidecars += 1
+                    logging.info(
+                        f"Copied sidecar {record.sidecar_path} to {sidecar_target}")
+        finally:
+            # finally: a failure on one file must not freeze the ETA
+            progress.advance(record.size_bytes)
 
-        if record.sidecar_path:
-            sidecar_target = copy_sidecar(
-                record.sidecar_path, record.path, final_target, claimed
-            )
-            sidecars += 1
-            logging.info(f"Copied sidecar {record.sidecar_path} to {sidecar_target}")
+    progress.finish()
 
     # Duplicates aren't copied, but their sidecars may hold context the kept
     # copy's sidecar doesn't (e.g. a different Takeout album), so park them
