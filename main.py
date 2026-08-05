@@ -123,10 +123,22 @@ def main():
 
     #Metadata loop
     from metadata import enrich_metadata
+    from progress import Progress
 
-    logging.info(f"Reading metadata ({args.workers} workers)...")
+    todo = [r for r in records if r.exists and r.size_bytes > 0]
+    logging.info(f"Reading metadata ({args.workers} workers, {len(todo)} files)...")
+    meta_progress = Progress("Metadata", len(todo),
+                             total_bytes=sum(r.size_bytes for r in todo))
+
+    def read_metadata(record):
+        try:
+            enrich_metadata(record)
+        finally:
+            meta_progress.advance(record.size_bytes)
+
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        list(pool.map(enrich_metadata, records))
+        list(pool.map(read_metadata, todo))
+    meta_progress.finish()
     # Quick sanity check log:
     sources = {}
 
@@ -142,9 +154,10 @@ def main():
         sources[r.data_source] = sources.get(r.data_source, 0) + 1
     # logging.info(f"Data sources: {sources}")
     # logging.info("Checking for duplicates...")
-    from duplicates import find_duplicates
+    from duplicates import find_duplicates, log_duplicate_summary
 
     duplicate_groups = find_duplicates(records, workers=args.workers)
+    dup_stats = log_duplicate_summary(duplicate_groups)
 
     # organize files based on their date taken
     # logging.info("Organizing files...")
@@ -152,9 +165,19 @@ def main():
 
     organize(records, args.destination, args.dry_run)
 
-    from reporter import write_report
+    from reporter import write_report, write_duplicates_report
 
     write_report(records, args.destination, args.dry_run)
+    write_duplicates_report(duplicate_groups, args.destination, args.dry_run)
+
+    from progress import format_bytes
+
+    logging.info(
+        f"=== Done. {len(records)} files seen, "
+        f"{sum(1 for r in records if r.is_corrupted)} corrupted, "
+        f"{dup_stats['redundant_files']} duplicates skipped "
+        f"({format_bytes(dup_stats['wasted_bytes'])} saved) ==="
+    )
 
 
 

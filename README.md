@@ -128,8 +128,11 @@ The pipeline in `main.py` runs five stages, each filling in more of a shared
    warning is recorded in the file's `errors` column, not treated as
    corruption.
 4. **Duplicates** ([duplicates.py](duplicates.py)) — group by file size, then
-   SHA-256 the candidates. In each identical group the first path (sorted) is
-   kept; the rest are marked as duplicates and not copied.
+   SHA-256 the candidates. Every file in a group is byte-identical, so the
+   copy that is kept is the *best documented* one: the most trustworthy date
+   source wins, then having a sidecar, then GPS, then a name without a
+   `(1)` copy-suffix, then the shallowest path. The rest are marked as
+   duplicates and not copied.
 5. **Organize** ([organizer.py](organizer.py)) — copy the survivors into
    `YEAR/MM Month/` with a `YYYY-MM-DD_HH-MM-SS_` prefix on the original name
    (undated files go to `Unknown Date/` unrenamed). Name collisions get a
@@ -139,9 +142,29 @@ The pipeline in `main.py` runs five stages, each filling in more of a shared
    output stays safe to copy onto any drive. `shutil.copy2` preserves file
    timestamps.
 
-Afterwards [reporter.py](reporter.py) writes a CSV into the destination with
-one row per file: status (`copied` / `duplicate` / `corrupted` / …), the date
-and which source provided it, camera, GPS, hash, destination, and any errors.
+Afterwards [reporter.py](reporter.py) writes two CSVs into the destination:
+
+- `report_<timestamp>.csv` — one row per file: status (`copied` /
+  `duplicate` / `corrupted` / …), the date and which source provided it,
+  camera, GPS, hash, destination, and any errors.
+- `duplicates_<timestamp>.csv` — one row per file in each duplicate set,
+  grouped and sorted with the biggest space savings first. `role` marks the
+  `kept` copy vs the `duplicate`s, and `reclaimed_bytes` is filled in on the
+  kept row only, so summing that column gives the true total saved.
+
+### Progress and ETA
+
+The metadata, integrity, and hashing stages run in a thread pool and report
+progress through [progress.py](progress.py):
+
+```
+Integrity: 8420/32705 (25.7%) | 71.2 GB of 310.4 GB | 44.1 files/s | elapsed 3m 12s | ETA 9m 18s
+```
+
+The ETA is computed from **bytes** finished rather than files finished — these
+stages are I/O bound, and a 4 GB video is not "one file" worth of work next to
+a 2 MB jpg. Lines are throttled to one every 15 seconds, so a multi-hour run
+produces a readable trickle instead of 32,705 lines.
 
 ## Sidecar files
 
