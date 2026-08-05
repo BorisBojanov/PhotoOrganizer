@@ -9,7 +9,10 @@ python3 main.py --dry-run "/Users/boris/Desktop/TestInput" -d "/Users/boris/Desk
 
 import argparse
 import logging
+import os
+import shutil
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -52,6 +55,26 @@ def parse_args() -> argparse.Namespace:
         default=Path("photo_organizer.log"),
         help="Path to the log file (default: photo_organizer.log).",
     )
+    parser.add_argument(
+        "--deep-verify",
+        action="store_true",
+        help="Fully decode every image's pixel data during the integrity "
+             "check. Catches truncation past the header, but is much slower; "
+             "the default only validates file structure.",
+    )
+    parser.add_argument(
+        "--no-ffprobe",
+        action="store_true",
+        help="Run without ffprobe: video dates fall back to sidecar/filename "
+             "and video integrity is not checked.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=min(8, os.cpu_count() or 4),
+        help="Thread count for metadata, integrity, and hashing phases "
+             "(default: %(default)s).",
+    )
     return parser.parse_args()
 
 def validate_args(args: argparse.Namespace) -> bool:
@@ -76,11 +99,22 @@ def main():
 
     if not validate_args(args):
         sys.exit(1)
-    
+
     else:
         logging.info(f"Sources: {[str(s) for s in args.sources]}")
         logging.info(f"Destination: {args.destination}")
-        
+
+    # Fail fast on a broken setup: without ffprobe every video would silently
+    # lose its container date and skip its integrity check.
+    if shutil.which("ffprobe") is None and not args.no_ffprobe:
+        logging.error(
+            "ffprobe not found on PATH. It is required for video dates and "
+            "video integrity checks — install ffmpeg (Windows: winget install "
+            "Gyan.FFmpeg, then open a NEW terminal). To run without video "
+            "checks anyway, pass --no-ffprobe."
+        )
+        sys.exit(1)
+
     # Next steps will be called here
     from scanner import scan_sources
 
@@ -88,12 +122,11 @@ def main():
     # logging.info(f"Scanner complete. {len(records)} files found.")
 
     #Metadata loop
-    # After scan_sources call, add:
-    # logging.info("Reading metadata...")
     from metadata import enrich_metadata
 
-    for record in records:
-        enrich_metadata(record)
+    logging.info(f"Reading metadata ({args.workers} workers)...")
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        list(pool.map(enrich_metadata, records))
     # Quick sanity check log:
     sources = {}
 
@@ -101,7 +134,7 @@ def main():
     # logging.info("Checking file integrity...")
     from integrity import check_integrity
 
-    check_integrity(records)
+    check_integrity(records, deep_verify=args.deep_verify, workers=args.workers)
 
     # Douplicate detection loop
     # after the metadata loop and integrity check
@@ -111,7 +144,7 @@ def main():
     # logging.info("Checking for duplicates...")
     from duplicates import find_duplicates
 
-    duplicate_groups = find_duplicates(records)
+    duplicate_groups = find_duplicates(records, workers=args.workers)
 
     # organize files based on their date taken
     # logging.info("Organizing files...")

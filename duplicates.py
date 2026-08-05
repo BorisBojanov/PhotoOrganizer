@@ -7,10 +7,26 @@ hashing & duplicate detection
 
 import hashlib
 import logging
+import re
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 from config import HASH_ALGORITHM, HASH_CHUNK_SIZE
 from models import FileRecord
+from progress import Progress, format_bytes
+
+# How much we trust each date source, best first. Used to pick which copy of
+# a duplicate set to keep.
+DATE_SOURCE_RANK = {
+    "exif": 0,
+    "video_container": 1,
+    "sidecar": 2,
+    "filename": 3,
+    "file_modified": 4,
+}
+
+# Google Takeout / Windows style copy suffix: "IMG_1234(1).jpg"
+COPY_SUFFIX = re.compile(r"\(\d+\)$")
 
 
 def compute_hash(record: FileRecord) -> str:
@@ -29,7 +45,8 @@ def compute_hash(record: FileRecord) -> str:
         return ""
 
 
-def find_duplicates(records: list[FileRecord]) -> dict[str, list[FileRecord]]:
+def find_duplicates(records: list[FileRecord],
+                    workers: int = 8) -> dict[str, list[FileRecord]]:
     """
     Hash all healthy files and group them by hash.
     Returns only the groups that contain 2+ files (actual duplicates).
@@ -45,9 +62,14 @@ def find_duplicates(records: list[FileRecord]) -> dict[str, list[FileRecord]]:
     candidates = [r for group in by_size.values() if len(group) > 1 for r in group]
     logging.info(f"{len(candidates)} files share a size with another — hashing those")
 
+    def _hash(record: FileRecord) -> None:
+        record.file_hash = compute_hash(record)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(_hash, candidates))
+
     by_hash = defaultdict(list)
     for record in candidates:
-        record.file_hash = compute_hash(record)
         if record.file_hash:
             by_hash[record.file_hash].append(record)
 

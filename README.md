@@ -18,7 +18,7 @@ TestOut/
 ## Usage
 
 ```bash
-python main.py SOURCE_DIR [SOURCE_DIR ...] -d DESTINATION_DIR [--dry-run] [--log-file PATH]
+python main.py SOURCE_DIR [SOURCE_DIR ...] -d DESTINATION_DIR [--dry-run] [--log-file PATH] [--deep-verify] [--no-ffprobe] [--workers N]
 ```
 
 - `sources` — one or more directories to scan (recursively).
@@ -26,6 +26,14 @@ python main.py SOURCE_DIR [SOURCE_DIR ...] -d DESTINATION_DIR [--dry-run] [--log
 - `--dry-run` — log everything the run *would* do without copying a single file.
   Always do this first; the summary and CSV report are produced either way.
 - `--log-file` — log destination (default `photo_organizer.log`).
+- `--deep-verify` — fully decode every image's pixels during the integrity
+  check. Catches truncation past the header, but takes hours on large
+  libraries; the default only validates file structure.
+- `--no-ffprobe` — run without ffprobe (video dates fall back to
+  sidecar/filename, video integrity is not checked). Without this flag, a
+  missing ffprobe aborts the run at startup instead of degrading silently.
+- `--workers` — thread count for the metadata, integrity, and hashing phases
+  (default: CPU count, capped at 8).
 
 Example:
 
@@ -36,8 +44,9 @@ python main.py --dry-run ~/Desktop/TestInput -d ~/Desktop/TestOut
 ## Setup
 
 Requires **Python 3.10+** and [ffmpeg](https://ffmpeg.org) (`ffprobe` is used
-for video metadata and corruption checks; without it videos fall back to other
-date sources and skip the integrity check).
+for video metadata and corruption checks). If `ffprobe` is not on PATH the
+run aborts at startup with instructions; pass `--no-ffprobe` to proceed
+without video checks.
 
 ### macOS / Linux
 
@@ -112,9 +121,12 @@ The pipeline in `main.py` runs five stages, each filling in more of a shared
    (`photoTakenTime`) → date parsed from the filename → file modified time.
    The winning source is recorded per file. Camera make/model and GPS are
    captured when available. Sidecar files are located here too (see below).
-3. **Integrity** ([integrity.py](integrity.py)) — fully decode each image
-   (Pillow) and parse each video's stream structure (ffprobe). Corrupted files
-   are excluded from copying and flagged in the report.
+3. **Integrity** ([integrity.py](integrity.py)) — validate each image's file
+   structure (Pillow `verify()`; add `--deep-verify` to also decode every
+   pixel) and parse each video's stream structure (ffprobe). Corrupted files
+   are excluded from copying and flagged in the report. An ffprobe timeout or
+   warning is recorded in the file's `errors` column, not treated as
+   corruption.
 4. **Duplicates** ([duplicates.py](duplicates.py)) — group by file size, then
    SHA-256 the candidates. In each identical group the first path (sorted) is
    kept; the rest are marked as duplicates and not copied.
